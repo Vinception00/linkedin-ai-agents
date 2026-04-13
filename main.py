@@ -1,13 +1,17 @@
 from core.logger import get_logger
-from core.claude_client import ClaudeClient
+from agent_poster.generator import PostGenerator
 
 logger = get_logger("main")
-logger.info("Projet linkedin-ai-agents démarré")
+logger.info("Test PostGenerator")
 
-# Test ClaudeClient
-client = ClaudeClient()
-reponse = client.generate(
-    system_prompt="Tu es un assistant spécialisé en data science.",
-    user_prompt="Donne-moi un conseil en une phrase pour un data scientist junior."
+generator = PostGenerator()
+
+post = generator.generate(
+    post_type="conseil",
+    sujet="nettoyer un dataset avec pandas",
+    contexte="j'ai passé des heures à débugger avant de comprendre l'importance du preprocessing"
 )
-logger.info(f"Réponse Claude : {reponse}")
+
+print("\n" + "="*50)
+print(post)
+print("="*50)
