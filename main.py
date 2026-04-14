@@ -1,26 +1,20 @@
+from agent_poster.content_planner import ContentPlanner
 from agent_poster.generator import PostGenerator
-from agent_poster.publisher import LinkedInPublisher
 from core.logger import get_logger
 from dotenv import load_dotenv
 
 load_dotenv()
 logger = get_logger("main")
 
-generator = PostGenerator()
-post = generator.generate(
-    post_type="conseil",
-    sujet="nettoyer un dataset avec pandas",
-    contexte="j'ai passé des heures à débugger avant de comprendre l'importance du preprocessing"
-)
+planner = ContentPlanner()
+params = planner.get_daily_post_params()
 
-print("\n" + "="*50)
-print(post)
-print("="*50 + "\n")
-
-publisher = LinkedInPublisher()
-succes = publisher.post(post, headless=False, dry_run=True)
-
-if succes:
-    logger.info("Pipeline complet : post généré et publié")
+if params:
+    logger.info(f"Post du jour : {params}")
+    generator = PostGenerator()
+    post = generator.generate(**params)
+    print("\n" + "="*50)
+    print(post)
+    print("="*50)
 else:
-    logger.error("Échec de la publication")
+    logger.info("Pas de post prévu aujourd'hui")

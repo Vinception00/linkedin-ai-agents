@@ -1,0 +1,44 @@
+profile:
+  name: "Vinss"
+  role: "Data Scientist junior"
+  experience: "1 an en Data Analytics"
+  stack: ["Python", "pandas", "SQL", "scikit-learn", "matplotlib"]
+  objectif: "Trouver un emploi en Data Science"
+
+schedule:
+  monday:
+    type: "veille"
+    theme: "Actualité et tendances data/IA"
+  tuesday:
+    type: "conseil"
+    theme: "Tips techniques Python/Data"
+  wednesday:
+    type: "conseil"
+    theme: "Tips techniques Python/Data"
+  thursday:
+    type: "story"
+    theme: "Expérience personnelle et parcours"
+  friday:
+    type: "conseil"
+    theme: "Bonnes pratiques data science"
+
+topics_bank:
+  conseil:
+    - "nettoyer un dataset avec pandas"
+    - "visualiser des données avec matplotlib et seaborn"
+    - "évaluer un modèle de classification"
+    - "feature engineering pour débutants"
+    - "SQL pour data scientists"
+    - "comprendre le overfitting"
+    - "automatiser un rapport avec Python"
+  story:
+    - "ma première mission en data analyst"
+    - "comment j'ai appris Python seul"
+    - "l'erreur qui m'a le plus appris"
+    - "pourquoi j'ai choisi la data science"
+    - "ce que personne ne dit sur les débuts en data"
+  veille:
+    - "l'impact des LLMs sur le métier de data scientist"
+    - "AutoML va-t-il remplacer les data scientists ?"
+    - "les outils data qui montent en 2026"
+    - "différences entre data analyst et data scientist"
