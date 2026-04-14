@@ -1,20 +1,14 @@
-from agent_poster.content_planner import ContentPlanner
-from agent_poster.generator import PostGenerator
-from core.logger import get_logger
+from agent_poster.scheduler import run_daily_pipeline, PostScheduler
 from dotenv import load_dotenv
+from core.logger import get_logger
 
 load_dotenv()
 logger = get_logger("main")
 
-planner = ContentPlanner()
-params = planner.get_daily_post_params()
+# Test 1 — lance le pipeline une fois immédiatement en dry_run
+logger.info("Test pipeline immédiat...")
+run_daily_pipeline(dry_run=True)
 
-if params:
-    logger.info(f"Post du jour : {params}")
-    generator = PostGenerator()
-    post = generator.generate(**params)
-    print("\n" + "="*50)
-    print(post)
-    print("="*50)
-else:
-    logger.info("Pas de post prévu aujourd'hui")
+# Test 2 — décommente pour lancer le vrai scheduler
+# scheduler = PostScheduler(hour=9, minute=0, dry_run=True)
+# scheduler.start()
