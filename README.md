@@ -24,24 +24,25 @@ Projet personnel de portfolio — agent IA qui automatise la création et la pub
 | Parsing CV | pdfplumber |
 
 ## Architecture
-linkedin-ai-agents/
-├── agent_poster/
-│   ├── generator.py        # Génération posts via Claude
-│   ├── publisher.py        # Publication LinkedIn via Playwright
-│   ├── content_planner.py  # Sélection automatique du sujet
-│   └── scheduler.py        # Pipeline quotidien automatisé
-├── agent_prospector/
-│   ├── cv_parser.py        # Parsing CV PDF
-│   ├── searcher.py         # Recherche profils LinkedIn
-│   └── messenger.py        # Messages personnalisés
-├── core/
-│   ├── claude_client.py    # Client API Anthropic
-│   ├── linkedin_client.py  # Client LinkedIn
-│   └── logger.py           # Logging centralisé
-├── data/
-│   └── content_calendar.yaml  # Stratégie éditoriale
-├── app.py                  # Dashboard Streamlit
-└── main.py                 # Point d'entrée
+
+    linkedin-ai-agents/
+    ├── agent_poster/
+    │   ├── generator.py        # Génération posts via Claude
+    │   ├── publisher.py        # Publication via Playwright
+    │   ├── content_planner.py  # Sélection du sujet
+    │   └── scheduler.py        # Pipeline quotidien
+    ├── agent_prospector/
+    │   ├── cv_parser.py        # Parsing CV PDF
+    │   ├── searcher.py         # Recherche LinkedIn
+    │   └── messenger.py        # Messages personnalisés
+    ├── core/
+    │   ├── claude_client.py    # Client API Anthropic
+    │   ├── linkedin_client.py  # Client LinkedIn
+    │   └── logger.py           # Logging centralisé
+    ├── data/
+    │   └── content_calendar.yaml
+    ├── app.py                  # Dashboard Streamlit
+    └── main.py                 # Point d'entrée
 ## Installation
 
 ```bash
@@ -67,22 +68,17 @@ LINKEDIN_PASSWORD=ton_mot_de_passe
 
 ## Utilisation
 
-**Lancer le dashboard :**
+**Interface de contrôle (dashboard) :**
 ```bash
 streamlit run app.py
 ```
+Depuis l'interface tu peux générer un post, le modifier et le publier manuellement.
 
-**Lancer le pipeline manuellement :**
+**Scheduler automatique (pilote automatique) :**
 ```bash
 python main.py
 ```
-
-**Lancer le scheduler automatique :**
-```python
-from agent_poster.scheduler import PostScheduler
-scheduler = PostScheduler(hour=9, minute=0)
-scheduler.start()
-```
+Lance le pipeline quotidien — génère et publie automatiquement selon le calendrier éditorial.
 
 ## Roadmap
 
