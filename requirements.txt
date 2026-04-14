@@ -1,0 +1,10 @@
+anthropic
+python-dotenv
+playwright
+apscheduler
+pdfplumber
+pyyaml
+streamlit
+plotly
+pandas
+requests
