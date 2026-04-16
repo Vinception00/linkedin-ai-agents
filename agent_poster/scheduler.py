@@ -4,6 +4,7 @@ from dotenv import load_dotenv
 from agent_poster.content_planner import ContentPlanner
 from agent_poster.generator import PostGenerator
 from agent_poster.publisher import LinkedInPublisher
+from data.posts_db import PostsDB
 from core.logger import get_logger
 
 load_dotenv()
@@ -13,15 +14,25 @@ logger = get_logger("agent_poster.scheduler")
 def run_daily_pipeline(dry_run: bool = False):
     """
     Pipeline complet du jour :
-    1. Vérifie s'il y a un post prévu
-    2. Choisit le sujet via ContentPlanner
-    3. Génère le post via PostGenerator
-    4. Publie via LinkedInPublisher
+    1. Vérifie qu'on n'a pas déjà posté aujourd'hui
+    2. Vérifie s'il y a un post prévu
+    3. Choisit le sujet via ContentPlanner
+    4. Génère le post via PostGenerator
+    5. Vérifie que le contenu n'est pas un doublon
+    6. Publie via LinkedInPublisher
+    7. Sauvegarde en base
     """
     logger.info("="*40)
     logger.info("Démarrage du pipeline quotidien")
 
+    db = PostsDB()
+
     try:
+        # Protection 1 — déjà posté aujourd'hui
+        if db.already_posted_today():
+            logger.info("Post déjà publié aujourd'hui — pipeline arrêté")
+            return
+
         # Étape 1 — plan du jour
         planner = ContentPlanner()
         params = planner.get_daily_post_params()
@@ -33,14 +44,26 @@ def run_daily_pipeline(dry_run: bool = False):
         # Étape 2 — génération
         generator = PostGenerator()
         post = generator.generate(**params)
+
+        # Protection 2 — contenu dupliqué
+        if db.is_duplicate_content(post):
+            logger.warning("Contenu dupliqué détecté — regénération...")
+            post = generator.generate(**params)
+            if db.is_duplicate_content(post):
+                logger.error("Doublon persistant après regénération — pipeline arrêté")
+                return
+
         logger.info(f"Post généré :\n{post}")
 
         # Étape 3 — publication
         publisher = LinkedInPublisher()
         succes = publisher.post(post, headless=True, dry_run=dry_run)
 
-        if succes:
+        if succes and not dry_run:
+            db.save_post(params["post_type"], params["sujet"], post)
             logger.info("Pipeline quotidien terminé avec succès")
+        elif succes and dry_run:
+            logger.info("DRY RUN terminé avec succès")
         else:
             logger.error("Échec de la publication")
 

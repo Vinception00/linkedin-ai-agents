@@ -1,8 +1,6 @@
 import streamlit as st
 import plotly.express as px
-import plotly.graph_objects as go
 import pandas as pd
-from datetime import datetime
 from dotenv import load_dotenv
 from data.posts_db import PostsDB
 from agent_poster.generator import PostGenerator
@@ -38,7 +36,6 @@ if page == "Dashboard":
     else:
         df = pd.DataFrame(posts)
 
-        # Métriques globales
         col1, col2, col3, col4 = st.columns(4)
         col1.metric("Posts publiés", len(df))
         col2.metric("Total likes", int(df["likes"].sum()))
@@ -47,7 +44,6 @@ if page == "Dashboard":
 
         st.divider()
 
-        # Engagement par type de post
         col1, col2 = st.columns(2)
 
         with col1:
@@ -64,14 +60,12 @@ if page == "Dashboard":
             fig2.update_xaxes(tickangle=45)
             st.plotly_chart(fig2, use_container_width=True)
 
-        # Timeline engagement
         st.subheader("Évolution de l'engagement dans le temps")
         df["date"] = pd.to_datetime(df["date"])
         fig3 = px.line(df.sort_values("date"), x="date", y="likes",
                       markers=True, title="Likes dans le temps", color="type")
         st.plotly_chart(fig3, use_container_width=True)
 
-        # Tableau détaillé
         st.subheader("Détail des posts")
         st.dataframe(
             df[["date", "type", "sujet", "likes", "commentaires", "republications", "vues"]],
@@ -88,7 +82,6 @@ elif page == "Générer un post":
     with col1:
         st.subheader("Paramètres")
         post_type = st.selectbox("Type de post", ["conseil", "story", "veille"])
-
         use_planner = st.checkbox("Laisser Claude choisir le sujet", value=True)
 
         if use_planner:
@@ -98,7 +91,6 @@ elif page == "Générer un post":
 
         contexte = st.text_area("Contexte / détails personnels", height=100)
         dry_run = st.checkbox("Dry run (ne pas publier)", value=True)
-
         generate_btn = st.button("Générer", type="primary", use_container_width=True)
 
     with col2:
@@ -121,21 +113,28 @@ elif page == "Générer un post":
                     contexte=contexte
                 )
 
-            st.text_area("Post", value=post, height=400)
+            st.text_area("Post", value=post, height=400, key="post_content")
 
             if st.button("Publier sur LinkedIn", type="primary"):
-                with st.spinner("Publication en cours..."):
-                    publisher = LinkedInPublisher()
-                    succes = publisher.post(post, headless=True, dry_run=dry_run)
+                with st.spinner("Vérifications en cours..."):
 
-                    if succes:
-                        post_id = db.save_post(post_type, sujet_final, post)
-                        if dry_run:
-                            st.success("Dry run réussi — post non publié")
-                        else:
-                            st.success("Post publié sur LinkedIn !")
+                    if db.already_posted_today() and not dry_run:
+                        st.warning("Un post a déjà été publié aujourd'hui.")
+                    elif db.is_duplicate_content(post):
+                        st.warning("Ce contenu a déjà été publié. Génère un nouveau post.")
                     else:
-                        st.error("Échec de la publication")
+                        with st.spinner("Publication en cours..."):
+                            publisher = LinkedInPublisher()
+                            succes = publisher.post(post, headless=True, dry_run=dry_run)
+
+                            if succes:
+                                if not dry_run:
+                                    db.save_post(post_type, sujet_final, post)
+                                    st.success("Post publié sur LinkedIn !")
+                                else:
+                                    st.success("Dry run réussi — post non publié")
+                            else:
+                                st.error("Échec de la publication")
 
 # ─── PAGE HISTORIQUE ───
 elif page == "Historique des posts":

@@ -1,4 +1,5 @@
 import sqlite3
+import hashlib
 from pathlib import Path
 from datetime import datetime
 from core.logger import get_logger
@@ -27,6 +28,7 @@ class PostsDB:
                 type TEXT NOT NULL,
                 sujet TEXT NOT NULL,
                 contenu TEXT NOT NULL,
+                content_hash TEXT NOT NULL,
                 url TEXT,
                 created_at TEXT DEFAULT CURRENT_TIMESTAMP
             )
@@ -45,12 +47,40 @@ class PostsDB:
         """)
         self.conn.commit()
 
+    def _hash_content(self, content: str) -> str:
+        """Génère une empreinte unique du contenu."""
+        return hashlib.md5(content.encode()).hexdigest()
+
+    def already_posted_today(self) -> bool:
+        """Vérifie si un post a déjà été publié aujourd'hui."""
+        cursor = self.conn.execute("""
+            SELECT COUNT(*) FROM posts
+            WHERE date = ?
+        """, (datetime.now().strftime("%Y-%m-%d"),))
+        count = cursor.fetchone()[0]
+        already = count > 0
+        if already:
+            logger.warning("Un post a déjà été publié aujourd'hui")
+        return already
+
+    def is_duplicate_content(self, content: str) -> bool:
+        """Vérifie si ce contenu exact a déjà été publié."""
+        content_hash = self._hash_content(content)
+        cursor = self.conn.execute("""
+            SELECT COUNT(*) FROM posts WHERE content_hash = ?
+        """, (content_hash,))
+        is_dup = cursor.fetchone()[0] > 0
+        if is_dup:
+            logger.warning("Contenu identique déjà publié — doublon détecté")
+        return is_dup
+
     def save_post(self, post_type: str, sujet: str, contenu: str, url: str = None) -> int:
         """Sauvegarde un post publié et retourne son id."""
+        content_hash = self._hash_content(contenu)
         cursor = self.conn.execute("""
-            INSERT INTO posts (date, type, sujet, contenu, url)
-            VALUES (?, ?, ?, ?, ?)
-        """, (datetime.now().strftime("%Y-%m-%d"), post_type, sujet, contenu, url))
+            INSERT INTO posts (date, type, sujet, contenu, content_hash, url)
+            VALUES (?, ?, ?, ?, ?, ?)
+        """, (datetime.now().strftime("%Y-%m-%d"), post_type, sujet, contenu, content_hash, url))
         self.conn.commit()
         post_id = cursor.lastrowid
         logger.info(f"Post sauvegardé en base (id={post_id})")
@@ -69,7 +99,7 @@ class PostsDB:
     def get_all_posts(self) -> list:
         """Retourne tous les posts avec leurs dernières stats."""
         cursor = self.conn.execute("""
-            SELECT 
+            SELECT
                 p.id,
                 p.date,
                 p.type,
@@ -93,7 +123,7 @@ class PostsDB:
         return [dict(zip(columns, row)) for row in cursor.fetchall()]
 
     def get_post_history(self, post_id: int) -> list:
-        """Retourne l'historique des stats d'un post (pour voir l'évolution)."""
+        """Retourne l'historique des stats d'un post."""
         cursor = self.conn.execute("""
             SELECT scraped_at, likes, commentaires, republications, vues
             FROM stats
