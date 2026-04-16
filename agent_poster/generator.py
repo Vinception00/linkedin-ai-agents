@@ -3,8 +3,10 @@ from core.logger import get_logger
 
 logger = get_logger("agent_poster.generator")
 
-SYSTEM_PROMPT = """Tu es un expert en personal branding LinkedIn pour les profils data science juniors.
-Tu rédiges des posts authentiques, concrets et engageants.
+from datetime import datetime
+
+SYSTEM_PROMPT = f"""Tu es un expert en personal branding LinkedIn pour les profils data science juniors.
+Nous sommes en {datetime.now().year}, tiens-en compte dans toutes tes références temporelles.
 
 RÈGLES IMPORTANTES :
 - N'invente jamais d'anecdotes personnelles ou d'expériences vécues à la première personne

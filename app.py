@@ -7,6 +7,7 @@ from agent_poster.generator import PostGenerator
 from agent_poster.publisher import LinkedInPublisher
 from agent_poster.content_planner import ContentPlanner
 
+
 load_dotenv()
 
 st.set_page_config(
@@ -77,6 +78,14 @@ if page == "Dashboard":
 elif page == "Générer un post":
     st.title("Générer un post LinkedIn")
 
+    # Initialise la session state
+    if "post_genere" not in st.session_state:
+        st.session_state.post_genere = None
+    if "sujet_final" not in st.session_state:
+        st.session_state.sujet_final = None
+    if "post_type_final" not in st.session_state:
+        st.session_state.post_type_final = None
+
     col1, col2 = st.columns([1, 2])
 
     with col1:
@@ -102,35 +111,46 @@ elif page == "Générer un post":
 
                 if use_planner or not sujet:
                     planner = ContentPlanner()
-                    sujet_final = planner.pick_topic(post_type)
-                    st.caption(f"Sujet choisi par Claude : *{sujet_final}*")
+                    st.session_state.sujet_final = planner.pick_topic(post_type)
+                    st.caption(f"Sujet choisi par Claude : *{st.session_state.sujet_final}*")
                 else:
-                    sujet_final = sujet
+                    st.session_state.sujet_final = sujet
 
-                post = generator.generate(
+                st.session_state.post_type_final = post_type
+                st.session_state.post_genere = generator.generate(
                     post_type=post_type,
-                    sujet=sujet_final,
+                    sujet=st.session_state.sujet_final,
                     contexte=contexte
                 )
 
-            st.text_area("Post", value=post, height=400, key="post_content")
+        if st.session_state.post_genere:
+            post_edite = st.text_area(
+                "Post (modifiable avant publication)",
+                value=st.session_state.post_genere,
+                height=400,
+                key="post_content"
+            )
 
             if st.button("Publier sur LinkedIn", type="primary"):
                 with st.spinner("Vérifications en cours..."):
-
                     if db.already_posted_today() and not dry_run:
                         st.warning("Un post a déjà été publié aujourd'hui.")
-                    elif db.is_duplicate_content(post):
+                    elif db.is_duplicate_content(post_edite):
                         st.warning("Ce contenu a déjà été publié. Génère un nouveau post.")
                     else:
                         with st.spinner("Publication en cours..."):
                             publisher = LinkedInPublisher()
-                            succes = publisher.post(post, headless=True, dry_run=dry_run)
+                            succes = publisher.post(post_edite, headless=False, dry_run=dry_run)
 
                             if succes:
                                 if not dry_run:
-                                    db.save_post(post_type, sujet_final, post)
+                                    db.save_post(
+                                        st.session_state.post_type_final,
+                                        st.session_state.sujet_final,
+                                        post_edite
+                                    )
                                     st.success("Post publié sur LinkedIn !")
+                                    st.session_state.post_genere = None
                                 else:
                                     st.success("Dry run réussi — post non publié")
                             else:
