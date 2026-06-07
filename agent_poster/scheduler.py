@@ -57,11 +57,11 @@ def run_daily_pipeline(dry_run: bool = False):
 
         # Étape 3 — publication
         publisher = LinkedInPublisher()
-        succes = publisher.post(post, headless=True, dry_run=dry_run)
+        succes, post_url = publisher.post(post, headless=True, dry_run=dry_run)
 
         if succes and not dry_run:
-            db.save_post(params["post_type"], params["sujet"], post)
-            logger.info("Pipeline quotidien terminé avec succès")
+            db.save_post(params["post_type"], params["sujet"], post, url=post_url)
+            logger.info(f"Pipeline quotidien terminé — URL : {post_url or 'non capturée'}")
         elif succes and dry_run:
             logger.info("DRY RUN terminé avec succès")
         else:

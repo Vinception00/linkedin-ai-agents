@@ -6,6 +6,7 @@ from data.posts_db import PostsDB
 from agent_poster.generator import PostGenerator
 from agent_poster.publisher import LinkedInPublisher
 from agent_poster.content_planner import ContentPlanner
+from core.analytics_scrapper import AnalyticsScraper
 from agent_prospector.cv_parser import CVParser
 from agent_prospector.searcher import LinkedInSearcher
 from agent_prospector.messenger import ProspectMessenger
@@ -144,16 +145,19 @@ elif page == "Générer un post":
                     else:
                         with st.spinner("Publication en cours..."):
                             publisher = LinkedInPublisher()
-                            succes = publisher.post(post_edite, headless=False, dry_run=dry_run)
+                            succes, post_url = publisher.post(post_edite, headless=False, dry_run=dry_run)
 
                             if succes:
                                 if not dry_run:
                                     db.save_post(
                                         st.session_state.post_type_final,
                                         st.session_state.sujet_final,
-                                        post_edite
+                                        post_edite,
+                                        url=post_url
                                     )
                                     st.success("Post publié sur LinkedIn !")
+                                    if post_url:
+                                        st.link_button("Voir le post", post_url)
                                     st.session_state.post_genere = None
                                 else:
                                     st.success("Dry run réussi — post non publié")
@@ -169,6 +173,37 @@ elif page == "Historique des posts":
     if not posts:
         st.info("Aucun post en base.")
     else:
+        # Rafraîchir les stats + corriger les URLs manquantes
+        with st.expander("Outils analytics"):
+            col1, col2 = st.columns(2)
+            with col1:
+                debug_mode = st.checkbox("Mode debug (screenshot)", value=False)
+                if st.button("Rafraîchir les stats de tous les posts"):
+                    with st.spinner("Scraping LinkedIn en cours..."):
+                        try:
+                            scraper = AnalyticsScraper()
+                            scraper.scrape_all_posts(debug=debug_mode)
+                            st.success("Stats mises à jour")
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"Erreur : {e}")
+            with col2:
+                st.caption("Corriger l'URL d'un post")
+                post_ids = [p["id"] for p in posts]
+                post_id_sel = st.selectbox("Post ID", post_ids,
+                                           format_func=lambda x: f"#{x} — {next(p['sujet'][:40] for p in posts if p['id']==x)}")
+                new_url = st.text_input("URL LinkedIn du post")
+                if st.button("Enregistrer l'URL") and new_url:
+                    try:
+                        scraper = AnalyticsScraper()
+                        scraper.update_post_url(post_id_sel, new_url)
+                        st.success("URL enregistrée")
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Erreur : {e}")
+
+        st.divider()
+
         for post in posts:
             with st.expander(f"{post['date']} — {post['type']} — {post['sujet'][:60]}..."):
                 col1, col2, col3, col4 = st.columns(4)
@@ -176,9 +211,23 @@ elif page == "Historique des posts":
                 col2.metric("Commentaires", post["commentaires"])
                 col3.metric("Republications", post["republications"])
                 col4.metric("Vues", post["vues"])
+                if post.get("scraped_at"):
+                    st.caption(f"Dernière mise à jour : {post['scraped_at'][:16]}")
                 st.text(post["contenu"])
+                col_url, col_scrape = st.columns(2)
                 if post.get("url"):
-                    st.link_button("Voir sur LinkedIn", post["url"])
+                    col_url.link_button("Voir sur LinkedIn", post["url"])
+                    if col_scrape.button("Rafraîchir ce post", key=f"refresh_{post['id']}"):
+                        with st.spinner("Scraping..."):
+                            try:
+                                scraper = AnalyticsScraper()
+                                scraper.scrape_post_stats(post["url"], post["id"], debug=True)
+                                st.success("Stats mises à jour")
+                                st.rerun()
+                            except Exception as e:
+                                st.error(f"Erreur : {e}")
+                else:
+                    col_url.caption("Pas d'URL enregistrée")
 
 # ─── PAGE PROSPECTEUR ───
 elif page == "Prospecteur":

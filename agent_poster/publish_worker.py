@@ -175,7 +175,31 @@ def main():
 
         publish_button = page.locator("button:has-text('Publier'), button:has-text('Post')")
         publish_button.last.click()
-        page.wait_for_timeout(3000)
+        page.wait_for_timeout(6000)
+
+        # Tente de récupérer l'URL du post publié depuis le feed
+        post_url = None
+        try:
+            for selector in [
+                "a[href*='/feed/update/urn:li:activity']",
+                "a[href*='/posts/'][href*='-activity-']",
+            ]:
+                links = page.locator(selector).all()
+                for link in links[:3]:
+                    href = link.get_attribute("href") or ""
+                    if "activity" in href:
+                        if not href.startswith("http"):
+                            href = "https://www.linkedin.com" + href
+                        post_url = href.split("?")[0]
+                        break
+                if post_url:
+                    break
+        except Exception as e:
+            print(f"URL non capturée : {e}")
+
+        if post_url:
+            print(f"POST_URL:{post_url}")
+
         print("PUBLISH_OK")
         browser.close()
 

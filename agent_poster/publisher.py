@@ -19,7 +19,7 @@ class LinkedInPublisher:
             raise ValueError("LINKEDIN_EMAIL et LINKEDIN_PASSWORD manquants dans .env")
         logger.info("LinkedInPublisher initialise")
 
-    def post(self, content: str, headless: bool = True, dry_run: bool = False) -> bool:
+    def post(self, content: str, headless: bool = True, dry_run: bool = False) -> tuple[bool, str | None]:
         worker = Path(__file__).parent / "publish_worker.py"
         cmd = [sys.executable, str(worker), content]
         if dry_run:
@@ -42,17 +42,22 @@ class LinkedInPublisher:
 
             if result.returncode != 0:
                 logger.error(f"Worker erreur : {result.stderr}")
-                return False
+                return False, None
 
             if "PUBLISH_OK" in output or "DRY_RUN_OK" in output:
-                return True
+                post_url = None
+                for line in output.split("\n"):
+                    if line.startswith("POST_URL:"):
+                        post_url = line[9:].strip()
+                        logger.info(f"URL post capturée : {post_url}")
+                return True, post_url
 
             logger.error(f"Output inattendu : {output}")
-            return False
+            return False, None
 
         except subprocess.TimeoutExpired:
             logger.error("Timeout")
-            return False
+            return False, None
         except Exception as e:
             logger.error(f"Erreur : {e}")
-            return False
+            return False, None
