@@ -6,6 +6,9 @@ from data.posts_db import PostsDB
 from agent_poster.generator import PostGenerator
 from agent_poster.publisher import LinkedInPublisher
 from agent_poster.content_planner import ContentPlanner
+from agent_prospector.cv_parser import CVParser
+from agent_prospector.searcher import LinkedInSearcher
+from agent_prospector.messenger import ProspectMessenger
 
 
 load_dotenv()
@@ -23,7 +26,8 @@ st.sidebar.title("LinkedIn AI Agent")
 page = st.sidebar.radio("Navigation", [
     "Dashboard",
     "Générer un post",
-    "Historique des posts"
+    "Historique des posts",
+    "Prospecteur"
 ])
 
 # ─── PAGE DASHBOARD ───
@@ -175,3 +179,140 @@ elif page == "Historique des posts":
                 st.text(post["contenu"])
                 if post.get("url"):
                     st.link_button("Voir sur LinkedIn", post["url"])
+
+# ─── PAGE PROSPECTEUR ───
+elif page == "Prospecteur":
+    st.title("Agent Prospecteur LinkedIn")
+    st.caption("Parse ton CV, recherche des profils LinkedIn, génère des messages personnalisés.")
+
+    # Session state
+    if "cv_profil" not in st.session_state:
+        st.session_state.cv_profil = None
+    if "prospects" not in st.session_state:
+        st.session_state.prospects = []
+    if "messages_generes" not in st.session_state:
+        st.session_state.messages_generes = []
+
+    # ── Étape 1 : Upload du CV ──
+    st.subheader("Étape 1 — Charger ton CV")
+
+    col1, col2 = st.columns([1, 1])
+
+    with col1:
+        uploaded_cv = st.file_uploader("Importe ton CV (PDF)", type=["pdf"])
+        if uploaded_cv and st.button("Parser le CV", type="primary"):
+            with st.spinner("Lecture du CV via Claude..."):
+                try:
+                    import tempfile, os
+                    with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp:
+                        tmp.write(uploaded_cv.read())
+                        tmp_path = tmp.name
+                    parser = CVParser()
+                    st.session_state.cv_profil = parser.parse(tmp_path)
+                    os.unlink(tmp_path)
+                    st.success("CV parsé avec succès !")
+                except Exception as e:
+                    st.error(f"Erreur parsing CV : {e}")
+
+    with col2:
+        if st.session_state.cv_profil:
+            p = st.session_state.cv_profil
+            st.markdown(f"**{p.get('nom', '—')}** — {p.get('titre', '—')}")
+            if p.get("email"):
+                st.caption(f"Email : {p['email']}")
+            if p.get("competences"):
+                st.markdown("**Compétences :** " + ", ".join(p["competences"][:8]))
+            if p.get("resume"):
+                st.info(p["resume"])
+
+    if not st.session_state.cv_profil:
+        st.stop()
+
+    st.divider()
+
+    # ── Étape 2 : Recherche LinkedIn ──
+    st.subheader("Étape 2 — Rechercher des profils LinkedIn")
+
+    col1, col2, col3 = st.columns([3, 1, 1])
+    with col1:
+        keywords = st.text_input(
+            "Mots-clés de recherche",
+            placeholder="Ex: Data Scientist Paris, ML Engineer, Recruteur Tech"
+        )
+    with col2:
+        max_results = st.number_input("Nb résultats", min_value=1, max_value=20, value=5)
+    with col3:
+        degree = st.selectbox("Degré connexion", ["2", "1", "3"],
+                              format_func=lambda x: {"1": "1er", "2": "2ème", "3": "3ème+"}[x])
+
+    if st.button("Rechercher sur LinkedIn", type="primary") and keywords:
+        with st.spinner("Recherche en cours (connexion LinkedIn...)"):
+            try:
+                searcher = LinkedInSearcher()
+                st.session_state.prospects = searcher.search_people(
+                    keywords=keywords,
+                    max_results=int(max_results),
+                    degree=degree
+                )
+                st.session_state.messages_generes = []
+            except Exception as e:
+                st.error(f"Erreur recherche : {e}")
+
+    if st.session_state.prospects:
+        st.success(f"{len(st.session_state.prospects)} profils trouvés")
+        df_prospects = pd.DataFrame(st.session_state.prospects)
+        st.dataframe(df_prospects, use_container_width=True, hide_index=True)
+    elif st.session_state.prospects == []:
+        st.info("Aucun résultat. Vérifie les mots-clés ou ta connexion LinkedIn.")
+
+    if not st.session_state.prospects:
+        st.stop()
+
+    st.divider()
+
+    # ── Étape 3 : Générer des messages ──
+    st.subheader("Étape 3 — Générer des messages personnalisés")
+
+    col1, col2 = st.columns(2)
+    with col1:
+        mode_msg = st.radio("Type de message", ["connexion", "inmail"], horizontal=True,
+                            format_func=lambda x: "Invitation (≤300 chars)" if x == "connexion" else "InMail (long)")
+        objectif_msg = st.selectbox("Objectif", ["networking", "emploi", "collaboration"])
+    with col2:
+        details_msg = st.text_area(
+            "Contexte supplémentaire (optionnel)",
+            placeholder="Ex : je postule au poste de Data Analyst chez votre entreprise...",
+            height=80
+        )
+
+    if st.button("Générer les messages", type="primary"):
+        with st.spinner("Génération via Claude..."):
+            try:
+                messenger = ProspectMessenger()
+                st.session_state.messages_generes = messenger.generate_batch(
+                    mon_profil=st.session_state.cv_profil,
+                    cibles=st.session_state.prospects,
+                    mode=mode_msg,
+                    objectif=objectif_msg,
+                    details=details_msg
+                )
+                st.success("Messages générés !")
+            except Exception as e:
+                st.error(f"Erreur génération : {e}")
+
+    if st.session_state.messages_generes:
+        for item in st.session_state.messages_generes:
+            profil = item["profil"]
+            message = item["message"]
+            label = f"{profil.get('nom', '?')} — {profil.get('titre', '')} @ {profil.get('entreprise', '')}"
+            with st.expander(label):
+                col1, col2 = st.columns([3, 1])
+                with col1:
+                    st.text_area("Message", value=message, height=150, key=f"msg_{profil.get('url', profil.get('nom', ''))}")
+                with col2:
+                    if mode_msg == "connexion":
+                        chars = len(message)
+                        color = "green" if chars <= 300 else "red"
+                        st.markdown(f"**Caractères :** :{color}[{chars}/300]")
+                    if profil.get("url"):
+                        st.link_button("Voir profil", profil["url"])

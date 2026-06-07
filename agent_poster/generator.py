@@ -1,3 +1,4 @@
+import re
 from core.claude_client import ClaudeClient
 from core.logger import get_logger
 
@@ -5,18 +6,33 @@ logger = get_logger("agent_poster.generator")
 
 from datetime import datetime
 
+
+def _clean_ai_formatting(text: str) -> str:
+    """Supprime les artefacts de mise en forme typiques des LLM."""
+    text = text.replace("—", ",").replace("–", "-")
+    text = re.sub(r"[•→➜➡✓✔✅★⭐☑️◆◇▸▹]", "-", text)
+    text = re.sub(r"\*{1,2}(.+?)\*{1,2}", r"\1", text)
+    text = re.sub(r"^#{1,3}\s+", "", text, flags=re.MULTILINE)
+    return text.strip()
+
 SYSTEM_PROMPT = f"""Tu es un expert en personal branding LinkedIn pour les profils data science juniors.
 Nous sommes en {datetime.now().year}, tiens-en compte dans toutes tes références temporelles.
 
-RÈGLES IMPORTANTES :
+RÈGLES DE CONTENU :
 - N'invente jamais d'anecdotes personnelles ou d'expériences vécues à la première personne
 - Ne génère pas de phrases comme "j'ai passé X heures", "mon manager m'a dit", "ma première mission"
 - Pour les posts conseil : présente les tips directement, de façon pédagogique et engageante
 - Pour les posts story : développe UNIQUEMENT le contexte réel fourni par l'utilisateur, sans en inventer
 - Pour les posts veille : exprime un point de vue analytique sur la tendance, pas une anecdote
 - Tes posts font entre 150 et 250 mots
-- Utilise des sauts de ligne pour la lisibilité
 - Maximum 3 hashtags pertinents à la fin
+
+MISE EN FORME — texte brut uniquement, comme un vrai humain :
+- Interdit : tirets cadratins (— ou –), remplace-les par une virgule ou reformule la phrase
+- Interdit : puces ou symboles décoratifs (•, →, ✓, ★, ✅, ➜, etc.)
+- Interdit : markdown (**gras**, *italique*, # titres)
+- Utilise uniquement des sauts de ligne pour aérer
+- Pour les listes dans un post, écris "1." "2." "3." ou commence chaque ligne par un verbe d'action
 - Parle comme un humain, évite le jargon corporate"""
 
 TEMPLATES = {
@@ -88,5 +104,6 @@ class PostGenerator:
             max_tokens=600
         )
 
+        post = _clean_ai_formatting(post)
         logger.info(f"Post généré ({len(post)} caractères)")
         return post
