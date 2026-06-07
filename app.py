@@ -42,6 +42,14 @@ if page == "Dashboard":
     else:
         df = pd.DataFrame(posts)
 
+        # Nettoie les titres (enlève le markdown résiduel)
+        import re as _re
+        df["sujet_clean"] = df["sujet"].apply(lambda s: _re.sub(r'\*{1,2}', '', str(s)).strip())
+
+        # Label court pour les graphiques : date · type
+        df["label"] = df["date"].astype(str) + " · " + df["type"]
+
+        # ── KPIs ──
         col1, col2, col3, col4 = st.columns(4)
         col1.metric("Posts publiés", len(df))
         col2.metric("Total likes", int(df["likes"].sum()))
@@ -50,33 +58,77 @@ if page == "Dashboard":
 
         st.divider()
 
-        col1, col2 = st.columns(2)
+        has_stats = int(df["likes"].sum() + df["vues"].sum()) > 0
 
-        with col1:
-            st.subheader("Engagement par type de post")
-            df_type = df.groupby("type")[["likes", "commentaires", "vues"]].mean().reset_index()
-            fig = px.bar(df_type, x="type", y=["likes", "commentaires"],
-                        barmode="group", title="Moyenne likes & commentaires par type")
-            st.plotly_chart(fig, use_container_width=True)
+        if not has_stats:
+            st.info("Les stats sont à 0 pour l'instant. Va dans Historique pour scraper l'engagement de tes posts.")
+        else:
+            col1, col2 = st.columns(2)
 
-        with col2:
-            st.subheader("Vues par post")
-            fig2 = px.bar(df.sort_values("date"), x="sujet", y="vues",
-                         title="Vues par post", color="type")
-            fig2.update_xaxes(tickangle=45)
-            st.plotly_chart(fig2, use_container_width=True)
+            with col1:
+                # Barres horizontales : meilleurs posts par likes
+                df_sorted = df.sort_values("likes", ascending=True)
+                fig = px.bar(
+                    df_sorted,
+                    y="label",
+                    x="likes",
+                    orientation="h",
+                    color="type",
+                    title="Likes par post",
+                    custom_data=["sujet_clean"]
+                )
+                fig.update_traces(
+                    hovertemplate="<b>%{customdata[0]}</b><br>Likes : %{x}<extra></extra>"
+                )
+                fig.update_layout(
+                    yaxis_title="",
+                    xaxis_title="Likes",
+                    showlegend=False,
+                    margin=dict(l=10, r=10, t=40, b=10)
+                )
+                st.plotly_chart(fig, use_container_width=True)
 
-        st.subheader("Évolution de l'engagement dans le temps")
-        df["date"] = pd.to_datetime(df["date"])
-        fig3 = px.line(df.sort_values("date"), x="date", y="likes",
-                      markers=True, title="Likes dans le temps", color="type")
-        st.plotly_chart(fig3, use_container_width=True)
+            with col2:
+                # Ligne d'évolution des likes dans le temps
+                df["date_dt"] = pd.to_datetime(df["date"])
+                df_time = df.sort_values("date_dt")
+                fig2 = px.line(
+                    df_time,
+                    x="date_dt",
+                    y="likes",
+                    markers=True,
+                    color="type",
+                    title="Évolution des likes",
+                    custom_data=["sujet_clean", "label"]
+                )
+                fig2.update_traces(
+                    hovertemplate="<b>%{customdata[0]}</b><br>%{customdata[1]}<br>Likes : %{y}<extra></extra>"
+                )
+                fig2.update_layout(
+                    xaxis_title="",
+                    yaxis_title="Likes",
+                    margin=dict(l=10, r=10, t=40, b=10)
+                )
+                st.plotly_chart(fig2, use_container_width=True)
 
-        st.subheader("Détail des posts")
+        st.divider()
+
+        # ── Tableau détaillé ──
+        st.subheader("Tous les posts")
+        df_display = df[["date", "type", "sujet_clean", "likes", "commentaires", "republications", "vues"]].copy()
+        df_display = df_display.rename(columns={"sujet_clean": "sujet"})
+        df_display = df_display.sort_values("date", ascending=False)
         st.dataframe(
-            df[["date", "type", "sujet", "likes", "commentaires", "republications", "vues"]],
+            df_display,
             use_container_width=True,
-            hide_index=True
+            hide_index=True,
+            column_config={
+                "sujet": st.column_config.TextColumn("Sujet", width="large"),
+                "likes": st.column_config.NumberColumn("Likes"),
+                "commentaires": st.column_config.NumberColumn("Commentaires"),
+                "republications": st.column_config.NumberColumn("Reposts"),
+                "vues": st.column_config.NumberColumn("Vues"),
+            }
         )
 
 # ─── PAGE GÉNÉRER UN POST ───
