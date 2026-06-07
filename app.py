@@ -218,6 +218,8 @@ elif page == "Générer un post":
 
 # ─── PAGE HISTORIQUE ───
 elif page == "Historique des posts":
+    import re as _re
+
     st.title("Historique des posts")
 
     posts = db.get_all_posts()
@@ -225,61 +227,75 @@ elif page == "Historique des posts":
     if not posts:
         st.info("Aucun post en base.")
     else:
-        # Rafraîchir les stats + corriger les URLs manquantes
-        with st.expander("Outils analytics"):
-            col1, col2 = st.columns(2)
-            with col1:
-                debug_mode = st.checkbox("Mode debug (screenshot)", value=False)
-                if st.button("Rafraîchir les stats de tous les posts"):
-                    with st.spinner("Scraping LinkedIn en cours..."):
-                        try:
-                            scraper = AnalyticsScraper()
-                            scraper.scrape_all_posts(debug=debug_mode)
-                            st.success("Stats mises à jour")
-                            st.rerun()
-                        except Exception as e:
-                            st.error(f"Erreur : {e}")
-            with col2:
-                st.caption("Corriger l'URL d'un post")
-                post_ids = [p["id"] for p in posts]
-                post_id_sel = st.selectbox("Post ID", post_ids,
-                                           format_func=lambda x: f"#{x} — {next(p['sujet'][:40] for p in posts if p['id']==x)}")
-                new_url = st.text_input("URL LinkedIn du post")
-                if st.button("Enregistrer l'URL") and new_url:
-                    try:
-                        scraper = AnalyticsScraper()
-                        scraper.update_post_url(post_id_sel, new_url)
-                        st.success("URL enregistrée")
-                        st.rerun()
-                    except Exception as e:
-                        st.error(f"Erreur : {e}")
+        # Bouton de refresh global (discret, en haut)
+        col_btn, col_debug, _ = st.columns([2, 1, 4])
+        debug_mode = col_debug.checkbox("Debug screenshot", value=False)
+        if col_btn.button("Rafraîchir toutes les stats"):
+            with st.spinner("Scraping LinkedIn..."):
+                try:
+                    scraper = AnalyticsScraper()
+                    scraper.scrape_all_posts(debug=debug_mode)
+                    st.success("Stats mises à jour")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Erreur : {e}")
 
         st.divider()
 
         for post in posts:
-            with st.expander(f"{post['date']} — {post['type']} — {post['sujet'][:60]}..."):
-                col1, col2, col3, col4 = st.columns(4)
-                col1.metric("Likes", post["likes"])
-                col2.metric("Commentaires", post["commentaires"])
-                col3.metric("Republications", post["republications"])
-                col4.metric("Vues", post["vues"])
-                if post.get("scraped_at"):
-                    st.caption(f"Dernière mise à jour : {post['scraped_at'][:16]}")
-                st.text(post["contenu"])
-                col_url, col_scrape = st.columns(2)
+            sujet_clean = _re.sub(r'\*{1,2}', '', post["sujet"]).strip()
+            titre_expander = f"{post['date']} · {post['type']} · {sujet_clean[:55]}{'...' if len(sujet_clean) > 55 else ''}"
+
+            with st.expander(titre_expander):
+                # URL en premier — visible sans scroller
                 if post.get("url"):
-                    col_url.link_button("Voir sur LinkedIn", post["url"])
-                    if col_scrape.button("Rafraîchir ce post", key=f"refresh_{post['id']}"):
+                    col_lien, col_refresh, _ = st.columns([2, 2, 3])
+                    col_lien.link_button("Voir sur LinkedIn", post["url"])
+                    if col_refresh.button("Rafraîchir les stats", key=f"refresh_{post['id']}"):
                         with st.spinner("Scraping..."):
                             try:
                                 scraper = AnalyticsScraper()
-                                scraper.scrape_post_stats(post["url"], post["id"], debug=True)
+                                scraper.scrape_post_stats(post["url"], post["id"], debug=debug_mode)
                                 st.success("Stats mises à jour")
                                 st.rerun()
                             except Exception as e:
                                 st.error(f"Erreur : {e}")
                 else:
-                    col_url.caption("Pas d'URL enregistrée")
+                    col_input, col_save = st.columns([4, 1])
+                    new_url = col_input.text_input(
+                        "URL LinkedIn du post",
+                        placeholder="https://www.linkedin.com/posts/...",
+                        label_visibility="collapsed",
+                        key=f"url_input_{post['id']}"
+                    )
+                    if col_save.button("Enregistrer l'URL", key=f"save_url_{post['id']}") and new_url:
+                        try:
+                            scraper = AnalyticsScraper()
+                            scraper.update_post_url(post["id"], new_url)
+                            st.success("URL enregistrée — tu peux maintenant rafraîchir les stats")
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"Erreur : {e}")
+
+                st.divider()
+
+                # Stats
+                col1, col2, col3, col4 = st.columns(4)
+                col1.metric("Likes", post["likes"])
+                col2.metric("Commentaires", post["commentaires"])
+                col3.metric("Reposts", post["republications"])
+                col4.metric("Vues", post["vues"])
+                if post.get("scraped_at"):
+                    st.caption(f"Stats au {post['scraped_at'][:16]}")
+
+                # Contenu en hauteur fixe, scrollable
+                st.text_area(
+                    "Contenu publié",
+                    value=post["contenu"],
+                    height=160,
+                    disabled=True,
+                    key=f"content_{post['id']}"
+                )
 
 # ─── PAGE PROSPECTEUR ───
 elif page == "Prospecteur":
