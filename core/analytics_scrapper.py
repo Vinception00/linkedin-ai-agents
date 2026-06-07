@@ -18,9 +18,6 @@ USER_AGENT = (
 
 
 class AnalyticsScraper:
-    """
-    Scrape les stats d'engagement des posts LinkedIn.
-    """
 
     def __init__(self):
         self.db = PostsDB()
@@ -29,19 +26,18 @@ class AnalyticsScraper:
     def _load_cookies(self, context) -> bool:
         if not COOKIES_FILE.exists():
             return False
-        with open(COOKIES_FILE, "r") as f:
+        with open(COOKIES_FILE) as f:
             context.add_cookies(json.load(f))
         return True
 
     def _is_logged_in(self, page) -> bool:
         url = page.url
-        return "linkedin.com/feed" in url or "linkedin.com/in/" in url or "linkedin.com/posts" in url
+        return any(k in url for k in ["linkedin.com/feed", "linkedin.com/in/", "linkedin.com/posts"])
 
     def _parse_number(self, text: str) -> int:
-        """Convertit '1,2k', '1 234', '1 234' en entier."""
         if not text:
             return 0
-        # Retire les espaces fins (U+202F) et espaces normaux
+        # Retire les espaces insécables (U+202F, U+00A0) et normaux
         text = text.replace(" ", "").replace(" ", "").replace(" ", "")
         text = text.lower().replace(",", ".")
         if "k" in text:
@@ -52,33 +48,141 @@ class AnalyticsScraper:
         digits = "".join(c for c in text if c.isdigit())
         return int(digits) if digits else 0
 
-    def _extract_number_from_aria(self, label: str) -> int:
-        """Extrait un nombre depuis un aria-label comme '3 personnes ont réagi'."""
-        match = re.search(r"[\d\s ,\.k]+", label, re.IGNORECASE)
-        if match:
-            return self._parse_number(match.group().strip())
-        return 0
+    # ── Méthode principale : scrape depuis la page d'activité du profil ──────
 
-    def scrape_post_stats(self, post_url: str, post_id: int, debug: bool = False):
+    def sync_from_activity_page(self, username: str) -> int:
         """
-        Scrape les stats d'un post LinkedIn depuis son URL.
+        Scrape tous les posts depuis /in/{username}/recent-activity/all/
+        Une seule navigation, récupère URLs + réactions + impressions.
 
-        Args:
-            post_url: URL du post (format /feed/update/urn:li:activity:... ou /posts/...)
-            post_id: ID en base pour sauvegarder les stats
-            debug: Si True, prend une screenshot de debug dans logs/
+        Returns:
+            Nombre de posts mis à jour en base
         """
-        logger.info(f"Scraping post_id={post_id} url={post_url}")
+        activity_url = f"https://www.linkedin.com/in/{username}/recent-activity/all/"
+        updated = 0
 
         with sync_playwright() as p:
-            browser = p.chromium.launch(
-                headless=True,
-                args=["--disable-web-security", "--no-sandbox"]
-            )
+            browser = p.chromium.launch(headless=True, args=["--no-sandbox"])
             context = browser.new_context(user_agent=USER_AGENT)
             page = context.new_page()
             page.set_default_timeout(30000)
 
+            self._load_cookies(context)
+            page.goto(activity_url, timeout=60000)
+            page.wait_for_timeout(4000)
+
+            if not self._is_logged_in(page):
+                logger.error("Cookies expirés — sync impossible")
+                browser.close()
+                return 0
+
+            db_posts = self.db.get_all_posts()
+            cards = page.locator('[data-urn*="activity"]').all()
+            logger.info(f"{len(cards)} posts sur la page d'activité, {len(db_posts)} en DB")
+
+            for card in cards:
+                try:
+                    urn = card.get_attribute("data-urn") or ""
+                    m = re.search(r"activity:(\d+)", urn)
+                    if not m:
+                        continue
+
+                    activity_id = m.group(1)
+                    post_url = f"https://www.linkedin.com/feed/update/urn:li:activity:{activity_id}/"
+
+                    # Impressions : dans le lien "Voir les statistiques"
+                    impressions = 0
+                    stats_link = card.locator('a:has-text("Voir les statistiques")').first
+                    if stats_link.count() > 0:
+                        first_line = stats_link.inner_text().split("\n")[0].strip()
+                        impressions = self._parse_number(first_line)
+
+                    # Réactions : bouton avec aria-label contenant "personnes"
+                    likes = 0
+                    reaction_btn = card.locator('button[aria-label*="personnes"]').first
+                    if reaction_btn.count() > 0:
+                        btn_text = reaction_btn.inner_text().split("\n")[0].strip()
+                        likes = self._parse_number(btn_text)
+
+                    # Commentaires
+                    commentaires = 0
+                    for csel in ['button[aria-label*="commentaire"]', 'button[aria-label*="comment"]']:
+                        cel = card.locator(csel).first
+                        if cel.count() > 0:
+                            n = self._parse_number(cel.get_attribute("aria-label") or "")
+                            if n > 0:
+                                commentaires = n
+                                break
+
+                    # Texte du post pour le matching
+                    post_preview = ""
+                    for tsel in [
+                        ".update-components-text",
+                        ".feed-shared-update-v2__description",
+                        ".break-words",
+                    ]:
+                        el = card.locator(tsel).first
+                        if el.count() > 0:
+                            post_preview = el.inner_text().strip()[:200]
+                            if post_preview:
+                                break
+
+                    matched = self._match_db_post(db_posts, activity_id, post_preview)
+                    if matched:
+                        if not matched.get("url"):
+                            self.update_post_url(matched["id"], post_url)
+                        self.db.save_stats(matched["id"], likes, commentaires, 0, impressions)
+                        updated += 1
+                        logger.info(
+                            f"Post #{matched['id']} sync : {likes} likes, "
+                            f"{commentaires} commentaires, {impressions} impressions"
+                        )
+                    else:
+                        logger.info(f"Aucun post DB correspondant à activity:{activity_id}")
+
+                except Exception as e:
+                    logger.error(f"Erreur sync card : {e}")
+
+            browser.close()
+
+        return updated
+
+    def _match_db_post(self, db_posts: list, activity_id: str, preview: str) -> dict | None:
+        # 1. Match par activity_id déjà dans l'URL stockée
+        for p in db_posts:
+            if activity_id in (p.get("url") or ""):
+                return p
+
+        # 2. Match par similarité de texte (Jaccard sur les mots)
+        if preview:
+            preview_norm = re.sub(r"\s+", " ", preview.lower())[:150]
+            preview_words = set(preview_norm.split())
+            best, best_score = None, 0.0
+            for p in db_posts:
+                content_norm = re.sub(r"\s+", " ", p["contenu"].lower())[:150]
+                content_words = set(content_norm.split())
+                if preview_words and content_words:
+                    union = preview_words | content_words
+                    score = len(preview_words & content_words) / len(union)
+                    if score > best_score:
+                        best_score = score
+                        best = p
+            if best_score > 0.25:
+                return best
+
+        return None
+
+    # ── Scraping par URL de post (fallback si pas de username) ───────────────
+
+    def scrape_post_stats(self, post_url: str, post_id: int, debug: bool = False):
+        """Scrape les stats depuis l'URL directe du post."""
+        logger.info(f"Scraping post_id={post_id}")
+
+        with sync_playwright() as p:
+            browser = p.chromium.launch(headless=True, args=["--no-sandbox"])
+            context = browser.new_context(user_agent=USER_AGENT)
+            page = context.new_page()
+            page.set_default_timeout(30000)
             self._load_cookies(context)
 
             try:
@@ -86,28 +190,50 @@ class AnalyticsScraper:
                 page.wait_for_timeout(4000)
 
                 if not self._is_logged_in(page):
-                    logger.warning("Cookies expirés ou non valides — scraping impossible")
-                    browser.close()
+                    logger.warning("Cookies expirés — scraping impossible")
                     return
 
                 if debug:
-                    screenshot_path = DEBUG_DIR / f"analytics_debug_{post_id}.png"
-                    page.screenshot(path=str(screenshot_path), full_page=True)
-                    logger.info(f"Screenshot debug : {screenshot_path}")
+                    p_debug = DEBUG_DIR / f"analytics_debug_{post_id}.png"
+                    page.screenshot(path=str(p_debug), full_page=True)
+                    logger.info(f"Screenshot : {p_debug}")
 
-                likes = self._scrape_reactions(page)
-                commentaires = self._scrape_comments(page)
-                republications = self._scrape_reposts(page)
-                vues = self._scrape_views(page)
+                # Réactions : bouton "X\nPaul Vibert et N autres personnes"
+                likes = 0
+                btn = page.locator('button[aria-label*="personnes"]').first
+                if btn.count() > 0:
+                    likes = self._parse_number(btn.inner_text().split("\n")[0].strip())
 
-                logger.info(
-                    f"Stats post {post_id} : likes={likes}, "
-                    f"commentaires={commentaires}, reposts={republications}, vues={vues}"
-                )
-                self.db.save_stats(post_id, likes, commentaires, republications, vues)
+                # Impressions : lien "Voir les statistiques"
+                vues = 0
+                stats_link = page.locator('a:has-text("Voir les statistiques")').first
+                if stats_link.count() > 0:
+                    vues = self._parse_number(stats_link.inner_text().split("\n")[0].strip())
+                else:
+                    # Fallback span impressions
+                    for sel in ['span:has-text("impressions")', 'span:has-text("Impressions")', "strong"]:
+                        el = page.locator(sel).first
+                        if el.count() > 0:
+                            v = self._parse_number(el.inner_text().split("\n")[0].strip())
+                            if v > 0:
+                                vues = v
+                                break
+
+                # Commentaires
+                commentaires = 0
+                for csel in ['button[aria-label*="commentaire"]', 'button[aria-label*="comment"]']:
+                    el = page.locator(csel).first
+                    if el.count() > 0:
+                        n = self._parse_number(el.get_attribute("aria-label") or "")
+                        if n > 0:
+                            commentaires = n
+                            break
+
+                logger.info(f"Stats post {post_id} : {likes} likes, {commentaires} commentaires, {vues} vues")
+                self.db.save_stats(post_id, likes, commentaires, 0, vues)
 
             except Exception as e:
-                logger.error(f"Erreur scraping post {post_id} : {e}")
+                logger.error(f"Erreur scraping : {e}")
                 if debug:
                     try:
                         page.screenshot(path=str(DEBUG_DIR / f"analytics_error_{post_id}.png"))
@@ -116,131 +242,26 @@ class AnalyticsScraper:
             finally:
                 browser.close()
 
-    def _scrape_reactions(self, page) -> int:
-        """Récupère le nombre de réactions/likes."""
-        selectors = [
-            # Aria-label sur le bouton de réaction (le plus fiable)
-            "button[aria-label*='reaction']",
-            "button[aria-label*='réaction']",
-            "button[aria-label*='React']",
-            # Compteurs textuels
-            ".social-counts-reactions__count-value",
-            ".social-counts-reactions__count",
-            "[data-test-id='social-counts-reactions']",
-            # Fallback générique — cherche le nombre dans la zone sociale
-            ".social-details-social-counts__reactions-count",
-            ".reactions-react-button__count",
-        ]
-        for sel in selectors:
-            try:
-                el = page.locator(sel).first
-                if el.count() > 0:
-                    aria = el.get_attribute("aria-label") or ""
-                    text = el.inner_text().strip()
-                    val = self._extract_number_from_aria(aria) or self._parse_number(text)
-                    if val > 0:
-                        logger.debug(f"Réactions via '{sel}' : {val}")
-                        return val
-            except Exception:
-                continue
-        return 0
-
-    def _scrape_comments(self, page) -> int:
-        """Récupère le nombre de commentaires."""
-        selectors = [
-            "button[aria-label*='comment']",
-            "button[aria-label*='commentaire']",
-            ".social-counts-comments__count-value",
-            ".social-counts-comments",
-            "[data-test-id='social-counts-comments']",
-            ".social-details-social-counts__comments",
-        ]
-        for sel in selectors:
-            try:
-                el = page.locator(sel).first
-                if el.count() > 0:
-                    aria = el.get_attribute("aria-label") or ""
-                    text = el.inner_text().strip()
-                    val = self._extract_number_from_aria(aria) or self._parse_number(text)
-                    if val > 0:
-                        logger.debug(f"Commentaires via '{sel}' : {val}")
-                        return val
-            except Exception:
-                continue
-        return 0
-
-    def _scrape_reposts(self, page) -> int:
-        """Récupère le nombre de republications."""
-        selectors = [
-            "button[aria-label*='repost']",
-            "button[aria-label*='republication']",
-            "button[aria-label*='Repost']",
-            "[data-test-id='social-counts-reposts']",
-            ".social-counts-reposts",
-        ]
-        for sel in selectors:
-            try:
-                el = page.locator(sel).first
-                if el.count() > 0:
-                    aria = el.get_attribute("aria-label") or ""
-                    text = el.inner_text().strip()
-                    val = self._extract_number_from_aria(aria) or self._parse_number(text)
-                    if val > 0:
-                        logger.debug(f"Reposts via '{sel}' : {val}")
-                        return val
-            except Exception:
-                continue
-        return 0
-
-    def _scrape_views(self, page) -> int:
-        """
-        Récupère les impressions/vues du post.
-        Uniquement disponible sur tes propres posts quand tu es connecté.
-        """
-        selectors = [
-            # Section analytics visible sous ton propre post
-            ".post-analytics-entry__count",
-            ".analytics-entry__meta-count",
-            "[data-test-analytics]",
-            # Texte contenant "impression" ou "vue"
-            "span:has-text('impressions')",
-            "span:has-text('vues')",
-            "button[aria-label*='impression']",
-            "button[aria-label*='vue']",
-            # Fallback — cherche le lien analytics sous le post
-            "a[href*='analytics'][href*='activity']",
-        ]
-        for sel in selectors:
-            try:
-                el = page.locator(sel).first
-                if el.count() > 0:
-                    aria = el.get_attribute("aria-label") or ""
-                    text = el.inner_text().strip()
-                    val = self._extract_number_from_aria(aria) or self._parse_number(text)
-                    if val > 0:
-                        logger.debug(f"Vues via '{sel}' : {val}")
-                        return val
-            except Exception:
-                continue
-        return 0
-
     def scrape_all_posts(self, debug: bool = False):
-        """Scrape les stats de tous les posts en base qui ont une URL."""
-        posts = self.db.get_all_posts()
-        posts_with_url = [p for p in posts if p.get("url")]
-
-        if not posts_with_url:
-            logger.info("Aucun post avec URL en base — scraping ignoré")
+        posts = [p for p in self.db.get_all_posts() if p.get("url")]
+        if not posts:
+            logger.info("Aucun post avec URL")
             return
-
-        logger.info(f"Scraping {len(posts_with_url)} posts...")
-        for post in posts_with_url:
+        logger.info(f"Scraping {len(posts)} posts...")
+        for post in posts:
             self.scrape_post_stats(post["url"], post["id"], debug=debug)
 
     def update_post_url(self, post_id: int, url: str):
-        """Met à jour l'URL d'un post existant en base (pour corriger les anciens posts)."""
-        self.db.conn.execute(
-            "UPDATE posts SET url = ? WHERE id = ?", (url, post_id)
-        )
+        self.db.conn.execute("UPDATE posts SET url = ? WHERE id = ?", (url, post_id))
         self.db.conn.commit()
-        logger.info(f"URL mise à jour pour post_id={post_id} : {url}")
+        logger.info(f"URL mise à jour post_id={post_id} : {url}")
+
+    def extract_username_from_db(self) -> str | None:
+        """Extrait le username LinkedIn depuis les URLs stockées en base."""
+        posts = self.db.get_all_posts()
+        for p in posts:
+            url = p.get("url") or ""
+            m = re.search(r"linkedin\.com/(?:posts|in)/([^/_?]+)", url)
+            if m:
+                return m.group(1)
+        return None

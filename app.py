@@ -227,15 +227,25 @@ elif page == "Historique des posts":
     if not posts:
         st.info("Aucun post en base.")
     else:
-        # Bouton de refresh global (discret, en haut)
-        col_btn, col_debug, _ = st.columns([2, 1, 4])
-        debug_mode = col_debug.checkbox("Debug screenshot", value=False)
-        if col_btn.button("Rafraîchir toutes les stats"):
-            with st.spinner("Scraping LinkedIn..."):
+        # Sync depuis la page d'activité (récupère tout en une fois)
+        scraper_tmp = AnalyticsScraper()
+        default_username = scraper_tmp.extract_username_from_db() or ""
+
+        col_user, col_sync, col_debug = st.columns([3, 2, 1])
+        username_input = col_user.text_input(
+            "Ton username LinkedIn",
+            value=default_username,
+            placeholder="prenom-nom-123456789",
+            label_visibility="collapsed"
+        )
+        debug_mode = col_debug.checkbox("Debug", value=False)
+
+        if col_sync.button("Sync depuis LinkedIn", type="primary") and username_input:
+            with st.spinner(f"Récupération depuis /in/{username_input}/recent-activity..."):
                 try:
                     scraper = AnalyticsScraper()
-                    scraper.scrape_all_posts(debug=debug_mode)
-                    st.success("Stats mises à jour")
+                    n = scraper.sync_from_activity_page(username_input)
+                    st.success(f"{n} post(s) mis à jour")
                     st.rerun()
                 except Exception as e:
                     st.error(f"Erreur : {e}")
